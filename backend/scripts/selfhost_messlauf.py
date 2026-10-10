@@ -106,6 +106,22 @@ def gespraech(wiederholen: int) -> tuple[list[dict], float, int]:
     return segmente, segmente[-1]['end'], woerter
 
 
+def nachlauf_abwarten(uid: str, unterhaltung_id: str, hoechstens: float = 1800) -> float | None:
+    """Omi verschlagwortet die Unterhaltung für die Suche erst nach der Antwort, im Hintergrund und mit einem
+    weiteren Modellaufruf. Gewartet wird, bis ihr Suchvektor da ist; None, wenn er nicht kommt."""
+    from database.vector_db import index
+
+    if index is None:
+        return None
+    start = time.monotonic()
+    while time.monotonic() - start < hoechstens:
+        res = index.fetch(ids=[f'{uid}-{unterhaltung_id}'], namespace='ns1')
+        if res.get('vectors') if isinstance(res, dict) else getattr(res, 'vectors', None):
+            return time.monotonic() - start
+        time.sleep(10)
+    return None
+
+
 def verbrauch(uid: str, seit: str) -> list[dict]:
     from database._client import db
 
@@ -168,7 +184,8 @@ def main(argv: list[str] | None = None) -> int:
     auftrag = {
         'transcript_segments': segmente,
         'language': 'de',
-        'source': 'external_integration',
+        # Wie recorder.py: Bei 'external_integration' zöge Omi keine Erinnerungen aus den Sätzen.
+        'source': 'omi',
         'started_at': (jetzt - timedelta(seconds=dauer_audio + 60)).isoformat(),
         'client_session_id': f'messlauf-{jetzt:%Y%m%d-%H%M%S}',
     }
@@ -179,17 +196,28 @@ def main(argv: list[str] | None = None) -> int:
         headers={'Authorization': f'Bearer {args.schluessel}'},
         timeout=7200,
     )
-    dauer = time.monotonic() - start
-    ergebnis['verarbeitung'] = {'http': antwort.status_code, 'dauer_s': dauer, 'antwort': antwort.text[:500]}
+    antwort_s = time.monotonic() - start
+    ergebnis['verarbeitung'] = {'http': antwort.status_code, 'antwort_s': antwort_s, 'antwort': antwort.text[:500]}
     bericht += [
         '## Omi-Verarbeitung',
         '',
         f'- Gespräch: {_dauer(dauer_audio)}, {len(segmente)} Sätze, {woerter} Wörter '
         f'(Beispielgespräch x{args.wiederholen})',
-        f'- Antwort: HTTP {antwort.status_code} nach **{_dauer(dauer)}**',
+        f'- Antwort: HTTP {antwort.status_code} nach **{_dauer(antwort_s)}**',
     ]
+    dauer = antwort_s
     if antwort.status_code == 200:
         unterhaltung_id = antwort.json()['id']
+        print('   Antwort da, warte auf die Verschlagwortung im Hintergrund ...', flush=True)
+        nachlauf = nachlauf_abwarten(uid, unterhaltung_id)
+        if nachlauf is None:
+            bericht.append('- Verschlagwortung im Hintergrund: nach 30 min nicht fertig, fehlt in den Zahlen unten')
+        else:
+            dauer += nachlauf
+            bericht.append(
+                f'- Verschlagwortung im Hintergrund: weitere {_dauer(nachlauf)}, zusammen **{_dauer(dauer)}**'
+            )
+        ergebnis['verarbeitung'].update(nachlauf_s=nachlauf, dauer_s=dauer)
         u = httpx.get(
             f'{BACKEND}/v1/dev/user/conversations/{unterhaltung_id}',
             headers={'Authorization': f'Bearer {args.schluessel}'},
