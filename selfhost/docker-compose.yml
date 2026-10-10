@@ -1,0 +1,213 @@
+# Omi im Selbstbetrieb: Backend, Datenbank und Anmeldung auf dem eigenen PC.
+# Anleitung: selfhost/README.md. Einstellungen und Geheimnisse stehen in selfhost/.env
+# (Vorlage: .env.example, erzeugt mit "python einrichten.py").
+#
+# Nach außen offen sind nur zwei Ports:
+#   8000  Omi-Backend (App, recorder.py)
+#   9099  Anmelde-Emulator (nur die App braucht ihn)
+# Firestore, Redis, Typesense, LLM-Gateway und Pusher sind nur im Docker-Netz erreichbar.
+
+name: omi-selbst
+
+x-omi-umgebung: &omi-umgebung
+  # Omis eigener Modus für lokale Emulatoren (backend/utils/env_loader.py)
+  OMI_ENV_STAGE: local
+  ENVIRONMENT: selbstbetrieb
+  PYTHONUNBUFFERED: "1"
+  # Datenbank und Anmeldung: Emulatoren im Container "firebase"
+  FIRESTORE_EMULATOR_HOST: firebase:8085
+  FIREBASE_AUTH_EMULATOR_HOST: firebase:9099
+  FIREBASE_PROJECT_ID: demo-omi-local
+  FIREBASE_AUTH_PROJECT_ID: demo-omi-local
+  FIREBASE_API_KEY: local-firebase-auth-emulator-api-key
+  # Zwischenspeicher, Grenzen, Sperren
+  REDIS_DB_HOST: redis
+  REDIS_DB_PORT: "6379"
+  REDIS_DB_PASSWORD: ""
+  # Suche
+  TYPESENSE_HOST: typesense
+  TYPESENSE_HOST_PORT: "8108"
+  TYPESENSE_PROTOCOL: http
+  TYPESENSE_API_KEY: ${OMI_TYPESENSE_SCHLUESSEL:?OMI_TYPESENSE_SCHLUESSEL fehlt in .env}
+  # Verschlüsselung der Unterhaltungen, Erinnerungen und Chats. Geht dieser Wert verloren,
+  # sind die gespeicherten Daten nicht mehr lesbar: .env mitsichern.
+  ENCRYPTION_SECRET: ${OMI_VERSCHLUESSELUNG:?OMI_VERSCHLUESSELUNG fehlt in .env}
+  # Keine Hintertür über ADMIN_KEY
+  ADMIN_KEY_AUTH_ENABLED: "false"
+  # Dateiablage auf der Platte statt Google Cloud Storage. Omi erlaubt sie nur unterhalb
+  # von OMI_HARNESS_STATE_ROOT und nur mit Emulator (utils/other/local_storage.py).
+  OMI_HARNESS_STATE_ROOT: /daten
+  OMI_LOCAL_STORAGE_ROOT: /daten/ablage
+  OMI_LOCAL_STORAGE_BASE_URL: http://${OMI_PC_ADRESSE:?OMI_PC_ADRESSE fehlt in .env}:8000/_local/storage
+  BASE_API_URL: http://${OMI_PC_ADRESSE}:8000
+  API_BASE_URL: http://${OMI_PC_ADRESSE}:8000
+  # Sprachmodell: alle Aufrufe laufen über Omis LLM-Gateway (Pflicht, siehe
+  # utils/llm/gateway_client.py), das Gateway fragt OPENAI_BASE_URL.
+  OMI_LLM_GATEWAY_URL: http://llm-gateway:9080
+  OMI_LLM_GATEWAY_SERVICE_TOKEN: ${OMI_GATEWAY_SCHLUESSEL:?OMI_GATEWAY_SCHLUESSEL fehlt in .env}
+  OMI_LLM_GATEWAY_FEATURE_MODE: gateway
+  OPENAI_BASE_URL: ${OMI_LLM_URL:-http://host.docker.internal:11434/v1}
+  OPENAI_API_KEY: ${OMI_LLM_SCHLUESSEL:-ollama}
+  # Lokale Modelle brauchen viel länger als Omis Cloud-Modelle. Dieser Faktor verlängert
+  # alle Zeitgrenzen für Modellaufrufe (utils/llm/timeout_scale.py); 1 = wie bei Omi.
+  OMI_LLM_TIMEOUT_SCALE: ${OMI_LLM_ZEITFAKTOR:-30}
+  # Kleine lokale Modelle schreiben Omis Erinnerungs-JSON oft falsch; dann fehlen alle Erinnerungen
+  # dieser Unterhaltung. So hält das Modell die Antwort an Omis Schema (utils/llm/model_config.py).
+  OMI_LLM_SCHEMA_FEATURES: memory_l1
+  # Das Backend bricht HTTP-Anfragen sonst nach 2 Minuten ab (utils/other/timeout.py);
+  # from-segments verarbeitet die Unterhaltung aber in der Anfrage selbst.
+  HTTP_DEFAULT_TIMEOUT: "3600"
+  HTTP_POST_TIMEOUT: "3600"
+  # Das Gateway schreibt je Modellaufruf Tokens und geschätzte Cloud-Kosten in die
+  # Sammlung llm_gateway_attempts (ohne Inhalte). backend/scripts/selfhost_messlauf.py wertet sie aus.
+  LLM_GATEWAY_ACCOUNTING_ENABLED: "true"
+  # Vektorsuche lokal statt Pinecone (database/local_vector_index.py)
+  OMI_LOCAL_VECTOR_DB: /daten/vektoren.sqlite3
+  # Live-Spracherkennung ohne bezahlten Dienst. Tobis Weg: recorder.py transkribiert selbst.
+  STT_SERVICE_MODELS: parakeet
+  # Tarif "unlimited" (scripts/selfhost_konto.py) hat sonst 200 Chatfragen im Monat
+  NEO_CHAT_QUESTIONS_PER_MONTH: "100000"
+  # Grenzen für eine Person lockern (Developer-API sonst 25 Unterhaltungen je Stunde)
+  RATE_LIMIT_BOOST: "4"
+  RATE_LIMIT_BOOST_EXEMPT: ""
+  # Erinnerungen wie in Omis Produktion (backend/deploy/runtime_env/_base.yaml)
+  MEMORY_ENABLED: "on"
+  MEMORY_BELIEF_MODEL_ENABLED: "false"
+  MEMORY_BELIEF_AUTOMATION_PAUSED: "false"
+  MEMORY_TYPESENSE_COLLECTION: canonical_memory_atoms
+  HOSTED_PUSHER_API_URL: http://pusher:8080
+  # Schalter, die in Omis Produktion an sind und ohne die Zusammenfassungen bzw. die
+  # Prüfseite der App fehlen (backend/deploy/runtime_env/prod.overlay.yaml)
+  OMI_SHAPED_AGENT_MODE: "on"
+  REVIEW_SURFACE_MODE: "on"
+
+x-omi-backend: &omi-backend
+  image: omi-selbst-backend:${OMI_VERSION:-lokal}
+  build:
+    context: ..
+    dockerfile: backend/Dockerfile
+    args:
+      # Omis eigenes Basis-Image liegt in einer privaten Registry; das öffentliche
+      # python:3.11-slim tut es auch.
+      PYTHON_BASE_IMAGE: python:3.11-slim
+  restart: unless-stopped
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  volumes:
+    - ${OMI_DATEN:-./daten}/backend:/daten
+  depends_on:
+    vorbereiten:
+      condition: service_completed_successfully
+    firebase:
+      condition: service_healthy
+    redis:
+      condition: service_started
+    typesense:
+      condition: service_started
+
+services:
+  # Das Backend läuft im Container als Benutzer 10001 (siehe backend/Dockerfile).
+  # Dieser Schritt gibt ihm einmal beim Start den Datenordner.
+  vorbereiten:
+    image: omi-selbst-backend:${OMI_VERSION:-lokal}
+    user: root
+    command: ["sh", "-c", "mkdir -p /daten/ablage && chown -R 10001:10001 /daten"]
+    volumes:
+      - ${OMI_DATEN:-./daten}/backend:/daten
+
+  firebase:
+    image: omi-selbst-firebase:${OMI_VERSION:-lokal}
+    build:
+      context: firebase
+    restart: unless-stopped
+    environment:
+      FIREBASE_PROJECT: demo-omi-local
+      SICHERN_ALLE_MINUTEN: ${OMI_SICHERN_ALLE_MINUTEN:-10}
+      SICHERUNGEN_BEHALTEN: ${OMI_SICHERUNGEN_BEHALTEN:-48}
+    volumes:
+      - ${OMI_DATEN:-./daten}/firebase:/daten
+    ports:
+      - "9099:9099"
+    # genug Zeit, um beim Beenden die Datenbank zu sichern
+    stop_grace_period: 2m
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:4400/emulators"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ${OMI_DATEN:-./daten}/redis:/data
+
+  typesense:
+    image: typesense/typesense:27.1
+    restart: unless-stopped
+    command: ["--data-dir", "/data", "--api-key", "${OMI_TYPESENSE_SCHLUESSEL}", "--enable-cors"]
+    volumes:
+      - ${OMI_DATEN:-./daten}/typesense:/data
+
+  llm-gateway:
+    <<: *omi-backend
+    command: ["uvicorn", "llm_gateway.main:app", "--host", "0.0.0.0", "--port", "9080"]
+    environment:
+      <<: *omi-umgebung
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  backend:
+    <<: *omi-backend
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "uvloop"]
+    environment:
+      <<: *omi-umgebung
+    ports:
+      - "8000:8000"
+    depends_on:
+      vorbereiten:
+        condition: service_completed_successfully
+      firebase:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      typesense:
+        condition: service_started
+      llm-gateway:
+        condition: service_healthy
+
+  pusher:
+    <<: *omi-backend
+    command: ["uvicorn", "pusher.main:app", "--host", "0.0.0.0", "--port", "8080"]
+    environment:
+      <<: *omi-umgebung
+
+  # Geplante Hintergrundjobs (Tageszusammenfassung, Pflege der Erinnerungen), siehe jobs.sh
+  jobs:
+    <<: *omi-backend
+    command: ["sh", "/selfhost/jobs.sh"]
+    environment:
+      <<: *omi-umgebung
+    volumes:
+      - ${OMI_DATEN:-./daten}/backend:/daten
+      - ./jobs.sh:/selfhost/jobs.sh:ro
+    depends_on:
+      backend:
+        condition: service_started
+
+  # Ollama im Container, nur für Linux oder ohne Windows-Installation:
+  #   docker compose --profile ollama up -d   und in .env OMI_LLM_URL=http://ollama:11434/v1
+  # Unter Windows mit Grafikkarte besser Ollama direkt installieren (README).
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    restart: unless-stopped
+    volumes:
+      - ${OMI_DATEN:-./daten}/ollama:/root/.ollama
+      - ./ollama-modelle.sh:/selfhost/ollama-modelle.sh:ro

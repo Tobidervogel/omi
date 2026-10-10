@@ -128,6 +128,11 @@ index: Any = None
 if _pinecone_api_key and _pinecone_index_name:
     pc = Pinecone(api_key=_pinecone_api_key)
     index = pc.Index(_pinecone_index_name)
+elif os.getenv('OMI_LOCAL_VECTOR_DB'):
+    # Self-hosted deployments (selfhost/) keep vectors in a local SQLite file.
+    from database.local_vector_index import LocalVectorIndex
+
+    index = LocalVectorIndex(cast(str, os.getenv('OMI_LOCAL_VECTOR_DB')))
 
 
 def _get_data(uid: str, conversation_id: str, vector: List[float]) -> VectorRecordDoc:

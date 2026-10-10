@@ -12,6 +12,7 @@ from typing import Dict, Tuple, Union
 
 from utils.llm.gateway_client import is_auto_lane_id
 from utils.llm.model_constants import LUNA_MODEL
+from utils.llm.timeout_scale import scaled_seconds
 from utils.llm.vertex_pt_routing import (
     LANE_OVERFLOW_ORIGINS as FEATURE_PT_OVERFLOW_ORIGIN,
     OVERFLOW_ORIGIN_OPTION,
@@ -245,6 +246,17 @@ _STRUCTURED_OUTPUT_FEATURES = {
     'translation',
     'screen_frame_judge',
 }
+# Self-hosted deployments (selfhost/) run small local models that break the free-form JSON some
+# features ask for. Features listed here (comma-separated) get a json_schema lane instead, so the
+# provider (e.g. Ollama) holds the reply to the schema. Unset, nothing changes.
+SCHEMA_FEATURES_ENV = 'OMI_LLM_SCHEMA_FEATURES'
+
+
+def schema_forced_features() -> set[str]:
+    return {feature.strip() for feature in os.getenv(SCHEMA_FEATURES_ENV, '').split(',') if feature.strip()}
+
+
+_STRUCTURED_OUTPUT_FEATURES |= schema_forced_features()
 STRUCTURED_OUTPUT_FEATURES = _STRUCTURED_OUTPUT_FEATURES
 
 # Features whose prompt summarizes a whole conversation (or a whole day) inside a request a
@@ -259,7 +271,7 @@ STRUCTURED_OUTPUT_FEATURES = _STRUCTURED_OUTPUT_FEATURES
 # 412 app-selected POST /v1/conversations/{id}/reprocess calls (31%) with
 # `httpcore.ReadTimeout` -> `Error executing app: Request timed out.` A new call site for one of
 # these features now inherits the deadline instead of having to remember it.
-FOREGROUND_REQUEST_TIMEOUT_SECONDS = 60.0
+FOREGROUND_REQUEST_TIMEOUT_SECONDS = scaled_seconds(60.0)
 _FOREGROUND_TIMEOUT_FEATURES = frozenset(
     {
         'conv_structure',

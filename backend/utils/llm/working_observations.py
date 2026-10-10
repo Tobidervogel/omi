@@ -16,6 +16,7 @@ from models.memory_contracts import (
     WorkingObservationExtractionError,
     deterministic_contract_id,
 )
+from utils.llm.model_config import is_structured_output_feature
 from utils.llm.usage_tracker import Features, track_usage
 from utils.llm.prompt_cache import (
     EXPLICIT_CACHE_BREAKPOINT,
@@ -275,6 +276,48 @@ def _rejection_feedback_block(rejected_memory_examples: Sequence[str]) -> str:
     )
 
 
+# What the model writes per item; Omi fills in the rest of the archive item (ids, versions, policy).
+_MODEL_ITEM_FIELDS = frozenset(
+    {
+        'text',
+        'archive_class',
+        'evidence_quotes',
+        'speaker_label',
+        'about',
+        'confidence',
+        'risk_flags',
+        # belief model fields (BeliefClassifiedArchiveItem)
+        'subject_scope',
+        'belief_class',
+        'half_life_days',
+        'valid_to',
+        'arguments',
+    }
+)
+
+
+def forced_response_format(schema_object: type[BaseModel]) -> dict[str, Any]:
+    """json_schema response_format for OMI_LLM_SCHEMA_FEATURES (selfhost/).
+
+    A provider that enforces the schema (Ollama) makes a small local model write every property it allows.
+    So the schema keeps only the fields the model fills in, allows only the confidence values the parser
+    accepts (one invalid value would drop the whole batch) and bounds the lists, so the reply cannot run on.
+    """
+    schema = schema_object.model_json_schema()
+    for definition in schema.get('$defs', {}).values():
+        properties = definition.get('properties', {})
+        if 'text' not in properties or 'confidence' not in properties:
+            continue
+        definition['properties'] = {key: value for key, value in properties.items() if key in _MODEL_ITEM_FIELDS}
+        definition['properties']['confidence'] = {'type': 'string', 'enum': ['high', 'medium', 'low']}
+        for key in ('evidence_quotes', 'risk_flags'):
+            definition['properties'][key] = {'type': 'array', 'items': {'type': 'string'}, 'maxItems': 5}
+        definition['required'] = ['text', 'evidence_quotes', 'about', 'confidence']
+        definition['additionalProperties'] = False
+    schema['properties']['items']['maxItems'] = MAX_WORKING_OBSERVATION_ITEMS
+    return {'type': 'json_schema', 'json_schema': {'name': schema_object.__name__, 'schema': schema}}
+
+
 def _build_l1_messages(
     user_name: str,
     source_type: str,
@@ -490,6 +533,11 @@ def extract_l1_memory_archive_items_from_text(
         return []
 
     cache_enabled = bool(prefix_candidate and model_supports_explicit_cache(model))
+    if llm is None and is_structured_output_feature('memory_l1'):
+        # Only with OMI_LLM_SCHEMA_FEATURES (selfhost/): the provider holds the reply to the schema.
+        response_format = forced_response_format(cast(type[BaseModel], parser.pydantic_object))
+        model = cast(LlmInvoker, cast(Any, model).bind(response_format=response_format))
+
     static_system_message: dict[str, Any] = (
         {
             'role': 'system',

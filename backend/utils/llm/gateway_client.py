@@ -17,6 +17,7 @@ from pydantic import BaseModel, PrivateAttr, ValidationError
 from utils.http_client import get_llm_gateway_client, get_llm_gateway_semaphore
 from utils.llm.gateway_observability import record_direct_exception_surface, record_gateway_request_result
 from utils.llm.gateway_resilience import gateway_circuit, gateway_transport_timeout, observe_gateway_first_byte
+from utils.llm.timeout_scale import scaled_seconds
 from utils.llm.usage_tracker import get_current_context
 
 LLM_GATEWAY_SERVICE_TOKEN_ENV_VAR = 'OMI_LLM_GATEWAY_SERVICE_TOKEN'
@@ -46,8 +47,8 @@ LLM_GATEWAY_APP_PLATFORM_HEADER = 'X-Omi-App-Platform'
 # strings are never forwarded verbatim: unknown values are dropped so accounting
 # stays aggregatable and arbitrary client text never reaches an outbound header.
 LLM_GATEWAY_APP_PLATFORMS = frozenset({'desktop', 'mobile', 'web'})
-CHAT_EXTRACTION_TIMEOUT_SECONDS = 10.0
-BACKGROUND_CHAT_EXTRACTION_TIMEOUT_SECONDS = 35.0
+CHAT_EXTRACTION_TIMEOUT_SECONDS = scaled_seconds(10.0)
+BACKGROUND_CHAT_EXTRACTION_TIMEOUT_SECONDS = scaled_seconds(35.0)
 GATEWAY_TRANSPORT_STATUS_CODES = frozenset({502, 504})
 
 StructuredOutput = TypeVar('StructuredOutput', bound=BaseModel)
@@ -621,8 +622,8 @@ FILE_CHAT_VISION_AUTO_LANE_ID = feature_auto_lane_id(FILE_CHAT_VISION_FEATURE)
 FILE_CHAT_DOCUMENTS_AUTO_LANE_ID = feature_auto_lane_id(FILE_CHAT_DOCUMENTS_FEATURE)
 OPENAI_EMBEDDINGS_AUTO_LANE_ID = 'omi:auto:openai-embeddings'
 GEMINI_EMBEDDINGS_AUTO_LANE_ID = 'omi:auto:gemini-embeddings'
-EMBEDDINGS_TIMEOUT_SECONDS = 30.0
-_FILE_CHAT_GATEWAY_TIMEOUT_SECONDS = 120.0
+EMBEDDINGS_TIMEOUT_SECONDS = scaled_seconds(30.0)
+_FILE_CHAT_GATEWAY_TIMEOUT_SECONDS = scaled_seconds(120.0)
 
 _file_chat_gateway_async_client: AsyncOpenAI | None = None
 _file_chat_gateway_sync_client: OpenAI | None = None
