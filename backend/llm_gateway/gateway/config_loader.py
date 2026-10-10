@@ -13,6 +13,7 @@ from llm_gateway.gateway.dream_lanes import dream_lane_items
 from llm_gateway.gateway.schemas import FeatureBundle, GeneratedRouteOverride, LaneConfig, RouteArtifact
 from utils.llm import vertex_pt_routing as ptr
 from utils.llm.gateway_client import feature_auto_lane_id
+from utils.llm.timeout_scale import llm_timeout_scale
 from utils.llm.model_config import (
     get_all_configured_features,
     get_model,
@@ -66,16 +67,18 @@ def load_gateway_config(config_dir: str | Path | None = None, *, prod_mode: bool
             *lane_items,
         ]
     )
-    route_artifacts = _parse_route_artifacts(
-        [
-            *generated_artifact_items,
-            *desktop_artifact_items,
-            *embedding_artifact_items,
-            *systemone_artifact_items,
-            *dream_artifacts,
-            *artifact_items,
-        ],
-        prod_mode=resolved_prod_mode,
+    route_artifacts = _scale_route_timeouts(
+        _parse_route_artifacts(
+            [
+                *generated_artifact_items,
+                *desktop_artifact_items,
+                *embedding_artifact_items,
+                *systemone_artifact_items,
+                *dream_artifacts,
+                *artifact_items,
+            ],
+            prod_mode=resolved_prod_mode,
+        )
     )
     feature_bundles = _parse_feature_bundles([*generated_bundle_items, *bundle_items])
 
@@ -84,6 +87,26 @@ def load_gateway_config(config_dir: str | Path | None = None, *, prod_mode: bool
     _validate_feature_bundles(feature_bundles, lanes)
 
     return GatewayConfig(lanes=lanes, route_artifacts=route_artifacts, feature_bundles=feature_bundles)
+
+
+def _scale_route_timeouts(route_artifacts: dict[str, RouteArtifact]) -> dict[str, RouteArtifact]:
+    """Stretch route request timeouts by OMI_LLM_TIMEOUT_SCALE (self-hosted local models).
+
+    Runs after parsing, so the artifact digests are checked against the committed values.
+    """
+    scale = llm_timeout_scale()
+    if scale == 1.0:
+        return route_artifacts
+    return {
+        route_id: artifact.model_copy(
+            update={
+                'timeouts': artifact.timeouts.model_copy(
+                    update={'request_ms': int(artifact.timeouts.request_ms * scale)}
+                )
+            }
+        )
+        for route_id, artifact in route_artifacts.items()
+    }
 
 
 def load_generated_route_overrides(

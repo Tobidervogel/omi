@@ -12,6 +12,7 @@ from typing import Dict, Tuple, Union
 
 from utils.llm.gateway_client import is_auto_lane_id
 from utils.llm.model_constants import LUNA_MODEL
+from utils.llm.timeout_scale import scaled_seconds
 from utils.llm.vertex_pt_routing import (
     LANE_OVERFLOW_ORIGINS as FEATURE_PT_OVERFLOW_ORIGIN,
     OVERFLOW_ORIGIN_OPTION,
@@ -259,7 +260,7 @@ STRUCTURED_OUTPUT_FEATURES = _STRUCTURED_OUTPUT_FEATURES
 # 412 app-selected POST /v1/conversations/{id}/reprocess calls (31%) with
 # `httpcore.ReadTimeout` -> `Error executing app: Request timed out.` A new call site for one of
 # these features now inherits the deadline instead of having to remember it.
-FOREGROUND_REQUEST_TIMEOUT_SECONDS = 60.0
+FOREGROUND_REQUEST_TIMEOUT_SECONDS = scaled_seconds(60.0)
 _FOREGROUND_TIMEOUT_FEATURES = frozenset(
     {
         'conv_structure',
