@@ -156,6 +156,10 @@ Nichts davon fällt stillschweigend weg:
 - `backend/utils/llm/timeout_scale.py`: `OMI_LLM_TIMEOUT_SCALE` verlängert alle Zeitgrenzen für
   Modellaufrufe in Backend und Gateway (lokale Modelle sind langsamer). Ohne die Variable ändert sich
   nichts. Tests: `backend/tests/unit/test_llm_timeout_scale.py`.
+- `backend/utils/llm/model_config.py` und `working_observations.py`: `OMI_LLM_SCHEMA_FEATURES=memory_l1`
+  lässt das Modell die Erinnerungen in Omis Schema schreiben (Ollama erzwingt es). Ohne das schrieb
+  `qwen3:4b-instruct` ein JSON, das Omi nicht lesen konnte, und es entstand keine einzige Erinnerung.
+  Ohne die Variable ändert sich nichts. Tests: `backend/tests/unit/test_llm_schema_features.py`.
 - `backend/scripts/selfhost_konto.py`, `backend/scripts/selfhost_messlauf.py`,
   `backend/scripts/selfhost_beispiel.json`: Konto und Messlauf.
 - `selfhost/`: Compose, Emulator-Image mit Sicherung, Jobs, Skripte, diese Anleitung.

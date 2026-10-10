@@ -246,6 +246,17 @@ _STRUCTURED_OUTPUT_FEATURES = {
     'translation',
     'screen_frame_judge',
 }
+# Self-hosted deployments (selfhost/) run small local models that break the free-form JSON some
+# features ask for. Features listed here (comma-separated) get a json_schema lane instead, so the
+# provider (e.g. Ollama) holds the reply to the schema. Unset, nothing changes.
+SCHEMA_FEATURES_ENV = 'OMI_LLM_SCHEMA_FEATURES'
+
+
+def schema_forced_features() -> set[str]:
+    return {feature.strip() for feature in os.getenv(SCHEMA_FEATURES_ENV, '').split(',') if feature.strip()}
+
+
+_STRUCTURED_OUTPUT_FEATURES |= schema_forced_features()
 STRUCTURED_OUTPUT_FEATURES = _STRUCTURED_OUTPUT_FEATURES
 
 # Features whose prompt summarizes a whole conversation (or a whole day) inside a request a

@@ -51,12 +51,15 @@ x-omi-umgebung: &omi-umgebung
   # Lokale Modelle brauchen viel länger als Omis Cloud-Modelle. Dieser Faktor verlängert
   # alle Zeitgrenzen für Modellaufrufe (utils/llm/timeout_scale.py); 1 = wie bei Omi.
   OMI_LLM_TIMEOUT_SCALE: ${OMI_LLM_ZEITFAKTOR:-30}
+  # Kleine lokale Modelle schreiben Omis Erinnerungs-JSON oft falsch; dann fehlen alle Erinnerungen
+  # dieser Unterhaltung. So hält das Modell die Antwort an Omis Schema (utils/llm/model_config.py).
+  OMI_LLM_SCHEMA_FEATURES: memory_l1
   # Das Backend bricht HTTP-Anfragen sonst nach 2 Minuten ab (utils/other/timeout.py);
   # from-segments verarbeitet die Unterhaltung aber in der Anfrage selbst.
   HTTP_DEFAULT_TIMEOUT: "3600"
   HTTP_POST_TIMEOUT: "3600"
   # Das Gateway schreibt je Modellaufruf Tokens und geschätzte Cloud-Kosten in die
-  # Sammlung llm_gateway_attempts (ohne Inhalte). messlauf/messlauf.py wertet sie aus.
+  # Sammlung llm_gateway_attempts (ohne Inhalte). backend/scripts/selfhost_messlauf.py wertet sie aus.
   LLM_GATEWAY_ACCOUNTING_ENABLED: "true"
   # Vektorsuche lokal statt Pinecone (database/local_vector_index.py)
   OMI_LOCAL_VECTOR_DB: /daten/vektoren.sqlite3
